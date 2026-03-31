@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>数据下载工具</title>
+</head>
+
+<body>
+
+<h2>📥 数据下载工具</h2>
+
+<h3>日期区间</h3>
+<div id="ranges"></div>
+
+<button onclick="addRange()">➕ 添加日期段</button>
+
+<br><br>
+<button onclick="startDownload()">🚀 开始下载</button>
+
+<p id="status"></p>
+
+<script>
+
+function addRange() {
+    const div = document.createElement("div");
+    div.innerHTML = `
+        开始: <input type="date" class="start">
+        结束: <input type="date" class="end">
+        <br><br>
+    `;
+    document.getElementById("ranges").appendChild(div);
+}
+
+function startDownload() {
+    const starts = document.querySelectorAll(".start");
+    const ends = document.querySelectorAll(".end");
+
+    let ranges = [];
+
+    for (let i = 0; i < starts.length; i++) {
+        if (starts[i].value && ends[i].value) {
+            ranges.push([starts[i].value, ends[i].value]);
+        }
+    }
+
+    if (ranges.length === 0) {
+        alert("请选择日期");
+        return;
+    }
+
+    document.getElementById("status").innerText = "⏳ 下载中，请稍等...";
+
+    fetch("/download", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ ranges })
+    })
+    .then(res => res.blob())
+    .then(blob => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "data.zip";
+        a.click();
+
+        document.getElementById("status").innerText = "✅ 下载完成";
+    })
+    .catch(err => {
+        document.getElementById("status").innerText = "❌ 下载失败";
+    });
+}
+
+// 默认加一个日期段
+addRange();
+
+</script>
+
+</body>
+</html>
