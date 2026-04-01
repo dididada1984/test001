@@ -1,12 +1,13 @@
-# server.py（Render部署版：多日期段 → 打包ZIP → 浏览器下载）
+# server.py（最终稳定版：解决下载不弹出问题）
 
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, send_file, jsonify, send_from_directory
 import io
 import zipfile
 import requests
 import pandas as pd
 import urllib3
 import time
+import json
 from datetime import datetime, timedelta, timezone
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -54,11 +55,9 @@ def download_one_day(date_obj):
                     low_memory=False
                 )
 
-        # 处理异常header
         if not str(df.iloc[0, 0]).isdigit():
             df = df.iloc[1:]
 
-        # 转类型
         df = df.astype({
             'agg_id': int,
             'price': float,
@@ -78,50 +77,15 @@ def download_one_day(date_obj):
 # ================= 首页 =================
 @app.route("/")
 def home():
-    return "✅ Data Downloader Running"
+    return send_from_directory(".", "index.html")
 
 
 # ================= 下载接口 =================
 @app.route("/download", methods=["POST"])
 def download():
     try:
-        data = request.json
+        data = json.loads(request.form.get("data"))
         ranges = data.get("ranges", [])
 
         if not ranges:
-            return jsonify({"error": "no date ranges"}), 400
-
-        zip_buffer = io.BytesIO()
-        zf = zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED)
-
-        logs = []
-
-        for start, end in ranges:
-            for d in expand_date_range(start, end):
-                file_bytes, msg = download_one_day(d)
-
-                logs.append(msg)
-
-                if file_bytes:
-                    filename = msg if msg.endswith(".csv") else msg.replace("❌ ", "") + ".csv"
-                    zf.writestr(filename, file_bytes)
-
-                time.sleep(0.2)
-
-        zf.close()
-        zip_buffer.seek(0)
-
-        return send_file(
-            zip_buffer,
-            as_attachment=True,
-            download_name="data.zip",
-            mimetype="application/zip"
-        )
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ================= 启动 =================
-if __name__ == "__main__":
-    app.run()
+            return "no ranges",
