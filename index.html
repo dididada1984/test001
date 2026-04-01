@@ -1,79 +1,91 @@
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>数据下载工具</title>
-</head>
+# server.py（最终稳定版：解决下载不弹出问题）
 
-<body>
+from flask import Flask, request, send_file, jsonify, send_from_directory
+import io
+import zipfile
+import requests
+import pandas as pd
+import urllib3
+import time
+import json
+from datetime import datetime, timedelta, timezone
 
-<h2>📥 数据下载工具</h2>
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-<h3>日期区间</h3>
-<div id="ranges"></div>
+app = Flask(__name__)
 
-<button onclick="addRange()">➕ 添加日期段</button>
+SYMBOL = "ETHUSDT"
+VISION_BASE_URL = "https://data.binance.vision/data/futures/um/daily/aggTrades"
 
-<br><br>
-<button onclick="startDownload()">🚀 开始下载</button>
 
-<p id="status"></p>
+# ================= 日期展开 =================
+def expand_date_range(start, end):
+    s = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    e = datetime.strptime(end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    days = []
+    cur = s
+    while cur <= e:
+        days.append(cur)
+        cur += timedelta(days=1)
+    return days
 
-<script>
 
-function addRange() {
-    const div = document.createElement("div");
-    div.innerHTML = `
-        开始: <input type="date" class="start">
-        结束: <input type="date" class="end">
-        <br><br>
-    `;
-    document.getElementById("ranges").appendChild(div);
-}
+# ================= 单日下载 =================
+def download_one_day(date_obj):
+    date_str = date_obj.strftime("%Y-%m-%d")
+    zip_name = f"{SYMBOL}-aggTrades-{date_str}.zip"
+    url = f"{VISION_BASE_URL}/{SYMBOL}/{zip_name}"
 
-function startDownload() {
-    const starts = document.querySelectorAll(".start");
-    const ends = document.querySelectorAll(".end");
+    try:
+        r = requests.get(url, verify=False, timeout=60)
+        if r.status_code != 200:
+            return None, f"❌ 下载失败 {date_str}"
 
-    let ranges = [];
+        with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+            name = z.namelist()[0]
+            with z.open(name) as f:
+                df = pd.read_csv(
+                    f,
+                    header=None,
+                    names=[
+                        'agg_id','price','quantity',
+                        'first_trade_id','last_trade_id',
+                        'timestamp','is_buyer_maker','ignore'
+                    ],
+                    low_memory=False
+                )
 
-    for (let i = 0; i < starts.length; i++) {
-        if (starts[i].value && ends[i].value) {
-            ranges.push([starts[i].value, ends[i].value]);
-        }
-    }
+        if not str(df.iloc[0, 0]).isdigit():
+            df = df.iloc[1:]
 
-    if (ranges.length === 0) {
-        alert("请选择日期");
-        return;
-    }
+        df = df.astype({
+            'agg_id': int,
+            'price': float,
+            'quantity': float,
+            'first_trade_id': int,
+            'last_trade_id': int,
+            'timestamp': int
+        })
 
-    document.getElementById("status").innerText = "⏳ 下载中，请稍等...";
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+        return csv_bytes, f"{SYMBOL}_{date_str}.csv"
 
-    fetch("/download", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ ranges })
-    })
-    .then(res => res.blob())
-    .then(blob => {
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "data.zip";
-        a.click();
+    except Exception as e:
+        return None, f"❌ 异常 {date_str}: {str(e)}"
 
-        document.getElementById("status").innerText = "✅ 下载完成";
-    })
-    .catch(err => {
-        document.getElementById("status").innerText = "❌ 下载失败";
-    });
-}
 
-// 默认加一个日期段
-addRange();
+# ================= 首页 =================
+@app.route("/")
+def home():
+    return send_from_directory(".", "index.html")
 
-</script>
 
-</body>
-</html>
+# ================= 下载接口 =================
+@app.route("/download", methods=["POST"])
+def download():
+    try:
+        data = json.loads(request.form.get("data"))
+        ranges = data.get("ranges", [])
+
+        if not ranges:
+            return "no ranges",
